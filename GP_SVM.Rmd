@@ -1,0 +1,771 @@
+---
+title: "GP_pca_and_rf"
+author: "Shubh Sharma"
+date: "8/5/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## Importing Libraries
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(reshape2)
+library(Information)
+library(caTools)
+library(caret)
+set.seed(10)
+
+# Attach Packages
+library(tidyverse)    # data manipulation and visualization
+library(kernlab)      # SVM methodology
+library(e1071)        # SVM methodology
+library(ISLR)         # contains example data set "Khan"
+library(RColorBrewer) # customized coloring of plots
+library(lares) #install_github("laresbernardo/lares")
+library(ROCR)
+```
+
+
+
+## Readability and Presentation
+
+```{r}
+cp_2 <- c("#FEA47F", "#F97F51")
+cp_3 <- c("#2A363B", "#E84A5F", "#FF847C")
+cp_5 <- c("#2A363B", "#E84A5F", "#FF847C", "#FECEAB", "#99B898")
+cp_8 <- c("#FEA47F", "#F97F51", "#B33771", "#3B3B98", "#58B19F", "#BDC581", "#2C3A47", "#82589F")
+```
+
+### Data Loading
+
+```{r}
+dem <-read.csv("demogs.csv")
+```
+
+### Data Summary
+
+```{r}
+# Summary
+summary(dem)
+
+str(dem)
+
+# No of rows
+nrow(dem)
+# 71295
+
+
+```
+
+
+
+
+### Elimination of Duplicates
+
+```{r}
+length(unique(dem$Application.ID)) #demo data set
+#71292
+
+
+
+#filtering out the IDs that are duplicated
+
+dem %>%
+  group_by(Application.ID) %>%
+  filter(n() > 1)
+#assign new App ID to the duplicate records or drop them
+
+
+
+
+
+dem <- dem %>%
+  group_by(Application.ID) %>%
+  filter(n() == 1)
+
+
+
+```
+
+### Renaming the columns
+
+```{r}
+names(dem)[c(1:12)] <- c("Application_ID", "Age", "Gender", "Marital_Status", "No_Of_Dependents", "Income", "Education", "Profession", "Type_Of_Residence", "Months_In_Current_Residence", "Months_In_Current_Company","Performance_Tag")
+
+```
+
+### Performance Tag
+
+* Eliminated records with no value for Performance_Tag
+
+```{r}
+dem$Performance_Tag %>%
+  is.na() %>%
+  sum()
+
+summary(dem$Performance_Tag)
+
+dem <- dem %>%
+  filter(!is.na(Performance_Tag))
+```
+
+
+### Age
+
+```{r}
+#=========#
+#   Age   #
+#=========#
+
+# Check for Age variable rows with NA values
+dem$Age %>%
+  is.na() %>% sum()
+# 0
+
+# Checking for outliers
+dem$Age %>%
+  quantile(seq(0,1, 0.01))
+
+dem$Age %>%
+  boxplot(border = "#6fa058", outcol = "#ee853f")
+
+## Min age is -3
+## Some ages are 0
+## Capping minimum age to 18
+## Since 18 is the minimum age to avail a credit card
+
+dem$Age <- dem$Age %>%
+  as.numeric()
+
+dem[(which(dem$Age < 18)), ]$Age <- 18
+
+## Creating age bins
+dem$Age %>%
+  summary()
+
+# Different Bins
+# 1) 16-20
+# 2) 21-25
+# 3) 26-30
+# 4) 31-35
+# 5) 36-40
+# 6) 41-45
+# 7) 46-50
+# 8) 51-55
+# 9) 56-60
+# 10) 61-65
+
+# Age Bins function
+age_bin <- function(age=3){
+  if(age > 17 && age < 21)
+    return ("18-20")
+  else if(age > 20 && age < 26)
+    return ("21-25")
+  else if(age > 25 && age < 31)
+    return ("26-30")
+  else if(age > 30 && age < 36)
+    return ("31-35")
+  else if(age > 35 && age < 41)
+    return ("36-40")
+  else if(age > 40 && age < 46)
+    return ("41-45")
+  else if(age > 45 && age < 51)
+    return ("46-50")
+  else if(age > 50 && age < 56)
+    return ("51-55")
+  else if(age > 55 && age < 61)
+    return ("56-50")
+  else if(age > 60 && age < 66)
+    return ("60-65")
+  
+}
+
+# Creating Age Bin field
+dem$Age_Bin <-  dem$Age %>%
+  sapply(age_bin) %>%
+  as.factor()
+
+# Plot for Frequency of Age Bins
+ggplot(dem, aes(x=Age_Bin, y=..count../1000, fill=Age_Bin)) +
+  geom_bar() +
+  labs(x="Age Bin", y="Frequency in 1000s", fill="Age Bin", title="Frequency of different Age Bins") +
+  theme_minimal()
+
+# Age Bucket wise Performance Tag Frequency
+dem %>%
+  filter(!is.na(Performance_Tag)) %>%
+  ggplot(aes(x=Age_Bin, y=..count../1000, fill=as.factor(Performance_Tag))) +
+  geom_bar(position = "dodge") +
+  theme_minimal()+
+  scale_fill_manual(values = cp_2) +
+  labs(x="Age Buckets", y="Frequency in 1000s", fill="Performance Tag", title="Age Bucket wise Performance Tag Frequency")
+
+
+```
+
+### Gender
+
+```{r}
+#=============#
+#   Gender    #
+#=============#
+# Summary for Gender
+dem$Gender <- as.factor(dem$Gender)
+dem$Gender %>%
+  summary()
+
+# 2 NA's
+
+# Converting NA for Gender variable to "M"
+levels(dem$Gender)[1] <- "M"
+
+# Plot for frequency of each Gender
+ggplot(dem, aes(x=Gender, y=..count../1000, fill=Gender)) +
+  geom_bar() +
+  scale_fill_manual(values = cp_2)+
+  labs(x="Gender", y="Frequency in 1000s", fill="Gender", title="Frequency of different Gender") +
+  theme_minimal()
+
+# Gender wise Performance Tag Frequency
+dem %>%
+  filter(!is.na(Performance_Tag)) %>%
+  ggplot(aes(x=Gender, y=..count../1000, fill=as.factor(Performance_Tag))) +
+  geom_bar(position = "dodge") +
+  theme_minimal()+
+  scale_fill_manual(values = cp_2) +
+  labs(x="Gender", y="Frequency in 1000s", fill="Performance Tag", title="Gender wise Performance Tag Frequency")
+
+
+```
+
+### Marital Status
+
+```{r}
+#=====================#
+#   Marital Status   #
+#=====================#
+
+# Summary for Marital status at time of application
+dem$Marital_Status %>%
+  summary()
+# 6 NA's
+
+dem$Marital_Status <- as.factor(dem$Marital_Status)
+# Converting NA for Marital status at time of application variable to "Married"
+levels(dem$Marital_Status)[1] <- "Married"
+
+# Plot for Marital status at time of application frquency
+ggplot(dem, aes(x=Marital_Status, y=..count../1000, fill=Marital_Status)) +
+  geom_bar()+
+  scale_fill_manual(values = cp_8)+
+  labs(x="Marital Status at time of application", y="Frequency in 1000s", fill="Marital Status", title="Frequency of different Marital Status") +
+  theme_minimal()
+
+# Marital Status wise Performance Tag Frequency
+dem %>%
+  filter(!is.na(Performance_Tag)) %>%
+  ggplot(aes(x=Marital_Status, y=..count../1000, fill=as.factor(Performance_Tag))) +
+  geom_bar(position = "dodge") +
+  theme_minimal()+
+  scale_fill_manual(values = cp_2) +
+  labs(x="Marital Status", y="Frequency in 1000s", fill="Performance Tag", title="Marital Status wise Performance Tag Frequency")
+
+```
+
+### No of Dependents
+
+```{r}
+#=====================#
+#   No of Dependents  #
+#=====================#
+
+# Checking for NA values
+dem$No_Of_Dependents <- as.numeric(dem$No_Of_Dependents)
+dem$No_Of_Dependents %>%
+  is.na() %>%
+  sum()
+
+# 3 NA's
+
+dem$No_Of_Dependents[which(is.na(dem$No_Of_Dependents))] <- 3
+
+dem$No_Of_Dependents %>%
+  as.factor() %>%
+  summary()
+
+# Checking for outliers
+dem$No_Of_Dependents %>%
+  quantile(seq(0,1,0.01), na.rm = T)
+
+dem$No_Of_Dependents %>%
+  boxplot(border = "#6fa058", outcol = "#ee853f")
+
+#Converting the variable into factor type
+dem$No_Of_Dependents <- dem$No_Of_Dependents %>% as.factor()
+
+# Plot for No of Dependents Frequency
+ggplot(dem, aes(x=as.factor(No_Of_Dependents), y=..count../1000, fill=as.factor(No_Of_Dependents))) +
+  geom_bar() +
+  scale_fill_manual(values=cp_5)+
+  labs(x="No of Dependents", y="Frequency in 1000s", fill="No of Dependents", title="Frequency of No of Dependents") +
+  theme_minimal()
+
+# No of Dependents wise Performance Tag Frequency
+dem %>%
+  filter(!is.na(Performance_Tag)) %>%
+  ggplot(aes(x=No_Of_Dependents, y=..count../1000, fill=as.factor(Performance_Tag))) +
+  geom_bar(position = "dodge") +
+  theme_minimal()+
+  scale_fill_manual(values = cp_2) +
+  labs(x="No of Dependents", y="Frequency in 1000s", fill="Performance Tag", title="No of Dependents wise Performance Tag Frequency")
+
+
+
+```
+
+### Income
+
+```{r}
+#=============#
+#   Income    #
+#=============#
+
+# checking for NA values
+dem$Income %>%
+  is.na() %>%
+  sum()
+# 0
+
+# Checking for outliers
+dem$Income %>%
+  quantile(seq(0,1,0.01), na.rm = T)
+
+dem$Income %>%
+  boxplot(border = "#6fa058", outcol = "#ee853f")
+
+dem$Income %>%
+  as.factor() %>%
+  levels()
+
+# Converting Income less than 1 to 1.0
+dem[(which(dem$Income < 1)), ] $Income <- 1.0
+
+# Creating Income Bracket
+# Income Bracket Function
+
+income_bin <- function(income = 1){
+  if(income >= 1 && income <=10)
+    return ("1-10")
+  else if(income >= 11 && income <=20)
+    return ("11-20")
+  else if(income >= 21 && income <=30)
+    return ("21-30")
+  else if(income >= 31 && income <=40)
+    return ("31-40")
+  else if(income >= 41 && income <=50)
+    return ("41-50")
+  else
+    return ("51-60")
+}
+
+
+dem$Income_Bin <-  dem$Income %>%
+  sapply(income_bin) %>%
+  as.factor()
+
+# Income Bucket wise Performance Tag Frequency
+dem %>%
+  filter(!is.na(Performance_Tag)) %>%
+  ggplot(aes(x=Income_Bin, y=..count../1000, fill=as.factor(Performance_Tag))) +
+  geom_bar(position = "dodge") +
+  theme_minimal()+
+  scale_fill_manual(values = cp_2) +
+  labs(x="Income Buckets", y="Frequency in 1000s", fill="Performance Tag", title="Income Bucket wise Performance Tag Frequency")
+
+```
+
+
+### Education
+
+```{r}
+#===============#
+#   Education   #
+#===============#
+
+# checking for NA values
+dem$Education <- as.factor(dem$Education)
+dem$Education %>%
+  is.na() %>%
+  sum()
+
+# 0
+
+# Checking for blank rows
+dem$Education %>%
+  summary()
+
+levels(dem$Education)[1] <- "Professional"
+attach(dem)
+#Education <- as.factor(Education)
+# Plot for Education Frequency
+ggplot(dem, aes(x=Education, y=..count../1000, fill=Education)) +
+  geom_bar() +
+  scale_fill_manual(values=cp_5)+
+  labs(x="Education", y="Frequency in 1000s", fill="Education", title="Frequency of Education") +
+  theme_minimal()
+
+# Education wise Performance Tag Frequency
+dem %>%
+  filter(!is.na(Performance_Tag)) %>%
+  ggplot(aes(x=Education, y=..count../1000, fill=as.factor(Performance_Tag))) +
+  geom_bar(position = "dodge") +
+  theme_minimal()+
+  scale_fill_manual(values = cp_2) +
+  labs(x="Education", y="Frequency in 1000s", fill="Performance Tag", title="Education wise Performance Tag Frequency")
+
+```
+
+
+### Profession
+
+```{r}
+#=================#
+#   Profession    #
+#=================#
+
+# checking for NA values
+dem$Profession %>%
+  is.na() %>%
+  sum()
+
+# 0
+
+# Checking for blank rows
+dem$Profession %>%
+  summary()
+dem$Profession <- as.factor(dem$Profession)
+levels(dem$Profession)[1] <- "SAL"
+
+# Plot for Profession Frequency
+ggplot(dem, aes(x=Profession, y=..count../1000, fill=Profession)) +
+  geom_bar() +
+  scale_fill_manual(values=cp_3)+
+  labs(x="Profession", y="Frequency in 1000s", fill="Profession", title="Frequency of Profession") +
+  theme_minimal()
+
+# Profession wise Performance Tag Frequency
+dem %>%
+  filter(!is.na(Performance_Tag)) %>%
+  ggplot(aes(x=Profession, y=..count../1000, fill=as.factor(Performance_Tag))) +
+  geom_bar(position = "dodge") +
+  theme_minimal()+
+  scale_fill_manual(values = cp_2) +
+  labs(x="Profession", y="Frequency in 1000s", fill="Performance Tag", title="Profession wise Performance Tag Frequency")
+```
+
+
+
+
+
+
+
+### Type of Residence
+
+```{r}
+#=======================#
+#   Type of residence   #
+#=======================#
+# checking for NA values
+dem$Type_Of_Residence %>%
+  is.na() %>%
+  sum()
+
+# 0
+
+# Checking for blank rows
+dem$Type_Of_Residence %>%
+  summary()
+dem$Type_Of_Residence <- as.factor(dem$Type_Of_Residence)
+levels(dem$Type_Of_Residence)[1] <- "Rented"
+
+# Plot for frequency of type of residence
+ggplot(dem, aes(x=Type_Of_Residence, y=..count../1000, fill=Type_Of_Residence)) +
+  geom_bar() +
+  scale_fill_manual(values=cp_5)+
+  labs(x="Type of residence", y="Frequency in 1000s", fill="Type of residence", title="Frequency of Type of residence") +
+  theme_minimal() +
+  theme(axis.text.x=element_text(angle=40, hjust=1))
+
+# Type of Residence wise Performance Tag Frequency
+dem %>%
+  filter(!is.na(Performance_Tag)) %>%
+  ggplot(aes(x=Type_Of_Residence, y=..count../1000, fill=as.factor(Performance_Tag))) +
+  geom_bar(position = "dodge") +
+  scale_fill_manual(values = cp_2) +
+  labs(x="Type of Residence", y="Frequency in 1000s", fill="Performance Tag", title="Type of Residence wise Performance Tag Frequency") +
+  theme_minimal() +
+  theme(axis.text.x=element_text(angle=40, hjust=1))
+
+```
+
+#### Observation 
+
+* People who live in a rented apartment have a higher defaulter rate. This is also due to the fact that most of the customers are the ones who live in a rented apartment
+
+
+
+
+### No of Months in Current Residence
+
+```{r}
+#===========================================#
+#   Number of months in current residence   #
+#===========================================#
+
+# Checking for NA values
+dem$Months_In_Current_Residence %>%
+  is.na() %>%
+  sum()
+
+# 0
+
+# Checking for outliers
+dem$Months_In_Current_Residence %>%
+  quantile(seq(0,1,0.01), na.rm = T)
+
+dem$Months_In_Current_Residence %>%
+  boxplot(border = "#6fa058", outcol = "#ee853f")
+
+
+# Resident Years Bin Function
+res_yrs_bin <- function(nom=0){
+  noy = nom/12
+  if(noy > 0 && noy < 1)
+    return("< 1 yr")
+  else if(noy >= 1 && noy < 2)
+    return("1 yr")
+  else if(noy >= 2 && noy < 3)
+    return("2 yrs")
+  else if(noy >= 3 && noy < 4)
+    return("3 yrs")
+  else if(noy >= 4 && noy < 5)
+    return("4 yrs")
+  else if(noy >= 5 && noy < 6)
+    return("5 yrs")
+  else if(noy >= 6 && noy < 7)
+    return("6 yrs")
+  else if(noy >= 7 && noy < 8)
+    return("7 yrs")
+  else if(noy >= 8 && noy < 9)
+    return("8 yrs")
+  else if(noy >= 9 && noy < 10)
+    return("9 yrs")
+  else
+    return("> 10 yrs")
+}
+
+# Creating No of years in current residence variable
+dem$Yrs_Curr_Res <- dem$Months_In_Current_Residence %>%
+  sapply(res_yrs_bin) %>%
+  as.factor()
+
+# Plot of frequency of No of years in current residence variable
+ggplot(dem, aes(x=Yrs_Curr_Res, y=..count../1000, fill=Yrs_Curr_Res)) +
+  geom_bar() +
+  labs(x="No of Years in residence", y="Frequency in 1000s", fill="No of Years in residence", title="Frequency of Years in residence") +
+  theme_minimal() +
+  theme(axis.text.x=element_text(angle=40, hjust=1))
+
+
+
+# Years In Current Residence wise Performance Tag Frequency
+dem %>%
+  filter(!is.na(Performance_Tag)) %>%
+  ggplot(aes(x=Yrs_Curr_Res, y=..count../1000, fill=as.factor(Performance_Tag))) +
+  geom_bar(position = "dodge") +
+  scale_fill_manual(values = cp_2) +
+  labs(x="Years In Current Residence", y="Frequency in 1000s", fill="Performance Tag", title="Years In Current Residence wise Performance") +
+  theme_minimal() +
+  theme(axis.text.x=element_text(angle=40, hjust=1))
+
+
+```
+
+
+#### Observation
+
+* Most of the customers are the ones who live in a place they moved in within the last year. Therefore, most number of defaulters are from this group. 
+
+
+### Number of Months in Current Company
+
+```{r}
+#=========================================#
+#   Number of months in current company   #
+#=========================================#
+
+# Checking for NA values
+dem$Months_In_Current_Company %>%
+  is.na() %>%
+  sum()
+
+# 0
+
+# Checking for outliers
+dem$Months_In_Current_Company %>%
+  quantile(seq(0,1,0.01), na.rm = T)
+
+
+dem$Months_In_Current_Company %>%
+  boxplot(border = "#6fa058", outcol = "#ee853f")
+
+# Capping No of months in current company to 74
+dem[(which(dem$Months_In_Current_Company > 74)),] $Months_In_Current_Company <- 74
+
+#   Current Company Years Bin Function
+comp_yrs_bin <- function(nom=0){
+  noy = nom/12
+  if(noy > 0 && noy < 1)
+    return("< 1 yr")
+  else if(noy >= 1 && noy < 2)
+    return("1 yr")
+  else if(noy >= 2 && noy < 3)
+    return("2 yrs")
+  else if(noy >= 3 && noy < 4)
+    return("3 yrs") 
+  else if(noy >= 4 && noy < 5)
+    return("4 yrs")
+  else if(noy >= 5 && noy < 6)
+    return("5 yrs")
+  else
+    return("> 6 yrs")
+}
+
+# Crating variable No of years in curr comp
+dem$Yrs_Curr_Comp <- dem$Months_In_Current_Company %>%
+  sapply(comp_yrs_bin) %>%
+  as.factor()
+
+# Plot for No of years in current company
+ggplot(dem, aes(x=Yrs_Curr_Comp, y=..count../1000, fill=Yrs_Curr_Comp)) +
+  geom_bar() +
+  labs(x="No of Years in Current Company", y="Frequency in 1000s", fill="No of Years in Current Company", title="Frequency of Years in Current Company") +
+  theme_minimal() +
+  theme(axis.text.x=element_text(angle=40, hjust=1))
+
+
+# Years In Current Company wise Performance Tag Frequency
+dem %>%
+  filter(!is.na(Performance_Tag)) %>%
+  ggplot(aes(x=Yrs_Curr_Comp, y=..count../1000, fill=as.factor(Performance_Tag))) +
+  geom_bar(position = "dodge") +
+  theme_minimal()+
+  scale_fill_manual(values = cp_2) +
+  labs(x="Years In Current Company", y="Frequency in 1000s", fill="Performance Tag", title="Years In Current Company wise Performance Tag Frequency")
+
+
+```
+
+### Data Split
+
+```{r}
+dem <- as.data.frame(sapply(dem, as.numeric))
+str(dem)
+```
+
+```{r}
+dem_pruned <- dem[,-c(1, 13, 14, 15, 16)]
+
+set.seed(123) 
+split = sample.split(dem_pruned$Performance_Tag, SplitRatio = 0.70) 
+  
+training_set_svm = subset(dem_pruned, split == TRUE) 
+test_set_svm = subset(dem_pruned, split == FALSE) 
+```
+
+
+
+
+```{r}
+
+dem_predictors_for_svm <- training_set_svm[,-c(11)]
+
+#dem_predictors_for_svm = subset(dem, select = -c(Application_ID , Age_Bin, Income_Bin, Yrs_Curr_Comp, Yrs_Curr_Res, Performance_Tag) )
+
+class_memberships_for_svm = as.factor(training_set_svm[,c(11)])
+
+#class_memberships_for_svm <- as.factor(class_memberships_for_svm)
+
+dem_svm_upsample <- upSample(dem_predictors_for_svm, class_memberships_for_svm, list = FALSE, yname = "Performance_Tag")
+
+
+```
+
+```{r}
+
+```
+
+```{r}
+# Plot data
+#dem$Performance_Tag <- as.factor(dem$Performance_Tag)
+ggplot(data = dem_svm_upsample, aes(x = Marital_Status+No_Of_Dependents+Education+Profession+Type_Of_Residence+Age+Income+Months_In_Current_Residence+Months_In_Current_Company+Gender  , y = Performance_Tag, color = as.factor(Performance_Tag), shape = as.factor(Performance_Tag))) + 
+  geom_point(size = 2) +
+  scale_color_manual(values=c("#000000", "#FF0000")) +
+  theme(legend.position = "none")
+```
+
+
+### Fitting SVM to the training set
+
+```{r}
+classifier = svm(formula = Performance_Tag ~  . ,
+                 data = dem_svm_upsample, 
+                 type = 'C-classification', 
+                 kernel = 'linear',
+                 gamma=0.5) 
+
+```
+
+```{r}
+print(classifier)
+plot(classifier, data=test_set_svm)
+```
+
+```{r}
+y_pred = predict(classifier, newdata = test_set_svm[-11], type="response") 
+
+```
+```{r}
+pred <- prediction(y_pred,test_set_svm$Performance.Tag)
+```
+
+```{r}
+length(y_pred)
+length(test_set_svm$Performance_Tag)
+
+```
+```{r}
+test_set_svm$Performance_Tag <- as.factor(test_set_svm$Performance_Tag)
+multis = subset(test_set_svm, select = -c(test_set_svm$Performance_Tag))
+```
+
+```{r}
+mplot_density(test_set_svm$Performance_Tag, y_pred)
+mplot_roc(test_set_svm$Performance_Tag, y_pred)
+mplot_cuts(as.numeric(y_pred))
+mplot_splits(test_set_svm$Performance_Tag, as.numeric(y_pred))
+mplot_gain(test_set_svm$Performance_Tag,as.numeric(y_pred))
+mplot_response(test_set_svm$Performance_Tag,as.numeric(y_pred))
+```
+
+
+```{r}
+confusionMatrix(y_pred,as.factor(test_set_svm$Performance_Tag))
+```
+
